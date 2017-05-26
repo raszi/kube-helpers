@@ -1,0 +1,56 @@
+#!/usr/bin/env ruby
+
+BASE_PORT = 8000
+
+require 'yaml'
+require 'io/console'
+require 'socket'
+require 'timeout'
+
+def port_open?(ip, port, seconds=1)
+  Timeout::timeout(seconds) do
+    begin
+      TCPSocket.new(ip, port).close
+      true
+    rescue Errno::ECONNREFUSED, Errno::EHOSTUNREACH
+      false
+    end
+  end
+rescue Timeout::Error
+  false
+end
+
+def config
+  YAML.load_file(File.join(ENV['HOME'], '.kube', 'config'))
+end
+
+def clusters
+  config['clusters'].map { |cluster| cluster['name'] }
+end
+
+def mapping(matcher)
+  mappings = clusters.grep(matcher).each_with_index.map { |cluster, index| [cluster, BASE_PORT + index] }
+  Hash[mappings]
+end
+
+def wait_for_pids(pids)
+  while !pids.all? { |port| port_open?('127.0.0.1', port) }
+    yield
+  end
+end
+
+matcher = Regexp.new(ARGV.first.gsub('*', '.*'))
+mappings = mapping(matcher)
+
+pids = mappings.map do |cluster, port|
+  Process.spawn('kubectl', '--context', cluster, 'proxy', '--port', port.to_s, '--accept-hosts', 'localtest.me$', out: '/dev/null')
+end
+
+wait_for_pids(mappings.values) { sleep(0.5) }
+
+mappings.each do |cluster, port|
+  fork { exec('open', '-g', "http://#{cluster}.localtest.me:#{port}/ui") }
+end
+
+puts 'Leave proxies? (Q)uit (L)eave'
+Process.kill(*['TERM'].concat(pids)) if STDIN.getch.downcase == 'q'
