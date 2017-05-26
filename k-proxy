@@ -11,14 +11,10 @@ CONFIG = YAML.load_file(File.join(ENV['HOME'], '.kube', 'config'))
 
 def port_open?(ip, port, seconds=1)
   Timeout::timeout(seconds) do
-    begin
-      TCPSocket.new(ip, port).close
-      true
-    rescue Errno::ECONNREFUSED, Errno::EHOSTUNREACH
-      false
-    end
+    TCPSocket.new(ip, port).close
+    true
   end
-rescue Timeout::Error
+rescue Timeout::Error, Errno::ECONNREFUSED, Errno::EHOSTUNREACH
   false
 end
 
