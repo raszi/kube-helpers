@@ -7,6 +7,8 @@ require 'io/console'
 require 'socket'
 require 'timeout'
 
+CONFIG = YAML.load_file(File.join(ENV['HOME'], '.kube', 'config'))
+
 def port_open?(ip, port, seconds=1)
   Timeout::timeout(seconds) do
     begin
@@ -20,16 +22,14 @@ rescue Timeout::Error
   false
 end
 
-def config
-  YAML.load_file(File.join(ENV['HOME'], '.kube', 'config'))
-end
-
-def clusters
-  config['clusters'].map { |cluster| cluster['name'] }
-end
-
 def mapping(matcher)
-  mappings = clusters.grep(matcher).each_with_index.map { |cluster, index| [cluster, BASE_PORT + index] }
+  return { CONFIG['current-context'] => BASE_PORT } if matcher.nil?
+
+  regexp = Regexp.new(matcher.gsub('*', '.*'))
+
+  clusters = CONFIG['clusters'].map { |cluster| cluster['name'] }
+  mappings = clusters.grep(regexp).each_with_index.map { |cluster, index| [cluster, BASE_PORT + index] }
+
   Hash[mappings]
 end
 
@@ -39,8 +39,9 @@ def wait_for_pids(pids)
   end
 end
 
-matcher = Regexp.new(ARGV.first.gsub('*', '.*'))
-mappings = mapping(matcher)
+# MAIN
+
+mappings = mapping(ARGV.first)
 
 pids = mappings.map do |cluster, port|
   Process.spawn('kubectl', '--context', cluster, 'proxy', '--port', port.to_s, '--accept-hosts', 'localtest.me$', out: '/dev/null')
@@ -53,4 +54,8 @@ mappings.each do |cluster, port|
 end
 
 puts 'Leave proxies? (Q)uit (L)eave'
-Process.kill(*['TERM'].concat(pids)) if STDIN.getch.downcase == 'q'
+
+if STDIN.getch.downcase == 'q'
+  puts 'Killing proxies...'
+  Process.kill(*['TERM'].concat(pids))
+end
